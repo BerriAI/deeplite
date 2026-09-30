@@ -1,6 +1,6 @@
 # deeplite
 
-Copy `.env.example` to `.env` and set the API keys and OTLP endpoints. The LiteLLM proxy needs `general_settings.tracing.store: clickhouse` to expose `/v1/traces`
+Copy `.env.example` to `.env` and set the API keys and OTLP endpoints. `LITELLM_PROD_*` configures model calls, while `LITELLM_DEV_*` configures local trace export. The LiteLLM proxy needs `general_settings.tracing.store: clickhouse` to expose `/v1/traces`
 
 ```sh
 uv run deeplite "is litellm good?"

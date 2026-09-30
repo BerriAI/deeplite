@@ -41,8 +41,8 @@ def main() -> None:
     try:
         model: Final = ChatAnthropic(
             model=settings.model,
-            api_key=settings.litellm_key,
-            base_url=settings.gateway_url,
+            api_key=settings.prod_key,
+            base_url=settings.prod_base,
         )
         agent: Final = build_agent(model, make_search_tool(Exa(api_key=settings.exa_key)))
         print(run_task(agent, args.task))

@@ -22,8 +22,8 @@ def configure_tracing(settings: Settings) -> TracerProvider:
     provider.add_span_processor(
         BatchSpanProcessor(
             OTLPSpanExporter(
-                endpoint=settings.litellm_endpoint,
-                headers={"Authorization": f"Bearer {settings.litellm_key}"},
+                endpoint=settings.dev_base,
+                headers={"Authorization": f"Bearer {settings.dev_key}"},
             )
         )
     )

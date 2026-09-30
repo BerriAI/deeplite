@@ -14,7 +14,7 @@ from opentelemetry.proto.collector.trace.v1.trace_service_pb2 import ExportTrace
 
 from deeplite.agent import build_agent, make_filesystem_middleware, make_search_tool
 from deeplite.cli import run_task
-from deeplite.config import Settings
+from deeplite.config import Settings, configure
 from deeplite.tracing import configure_tracing
 
 
@@ -104,13 +104,14 @@ def test_swarm_handoffs_share_context_and_one_trace_across_both_otlp_destination
     monkeypatch.setenv("LANGSMITH_TRACING_MODE", "otel")
     settings: Final = Settings(
         model="scripted",
-        gateway_url="https://gateway.example.com",
+        prod_base="https://gateway.example.com",
+        prod_key="test-prod-key",
         exa_key="test-exa-key",
         langsmith_endpoint=f"http://127.0.0.1:{langsmith.server_port}/otel/v1/traces",
         langsmith_key="test-langsmith-key",
         langsmith_project="deeplite-test",
-        litellm_endpoint=f"http://127.0.0.1:{litellm.server_port}/v1/traces",
-        litellm_key="test-litellm-key",
+        dev_base=f"http://127.0.0.1:{litellm.server_port}/v1/traces",
+        dev_key="test-dev-key",
     )
     provider: Final = configure_tracing(settings)
     exa: Final = Mock(spec=Exa)
@@ -131,7 +132,7 @@ def test_swarm_handoffs_share_context_and_one_trace_across_both_otlp_destination
     assert all(path == "/otel/v1/traces" for path, _, _ in received[0])
     assert all(path == "/v1/traces" for path, _, _ in received[1])
     assert all(headers["x-api-key"] == "test-langsmith-key" for _, headers, _ in received[0])
-    assert all(headers["Authorization"] == "Bearer test-litellm-key" for _, headers, _ in received[1])
+    assert all(headers["Authorization"] == "Bearer test-dev-key" for _, headers, _ in received[1])
     langsmith_spans: Final = tuple(
         span
         for _, _, body in received[0]
@@ -166,6 +167,27 @@ def test_swarm_can_finish_with_a_non_editor_agent():
     agent: Final = build_agent(ScriptedModel(stop_at_red_team=True), make_search_tool(exa))
 
     assert run_task(agent, "Answer a question") == "Red team answer cites https://example.com/source"
+
+
+def test_configure_uses_separate_prod_and_dev_credentials(monkeypatch):
+    values: Final = {
+        "LITELLM_PROD_BASE": "https://gateway.example.com",
+        "LITELLM_PROD_KEY": "test-prod-key",
+        "LITELLM_DEV_BASE": "http://127.0.0.1:4000/v1/traces",
+        "LITELLM_DEV_KEY": "test-dev-key",
+        "EXA_API_KEY": "test-exa-key",
+        "LANGSMITH_OTLP_TRACES_ENDPOINT": "https://api.smith.example.com/otel/v1/traces",
+        "LANGSMITH_API_KEY": "test-langsmith-key",
+    }
+    for name, value in values.items():
+        monkeypatch.setenv(name, value)
+
+    settings: Final = configure()
+
+    assert settings.prod_base == values["LITELLM_PROD_BASE"]
+    assert settings.prod_key == values["LITELLM_PROD_KEY"]
+    assert settings.dev_base == values["LITELLM_DEV_BASE"]
+    assert settings.dev_key == values["LITELLM_DEV_KEY"]
 
 
 def test_only_editor_writes_shared_virtual_files():
