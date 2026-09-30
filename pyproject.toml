@@ -1,0 +1,29 @@
+[project]
+name = "deeplite"
+version = "0.1.0"
+description = "A small Deep Agents subagent CLI with OpenTelemetry tracing"
+readme = "README.md"
+requires-python = ">=3.13,<3.14"
+dependencies = [
+    "deepagents",
+    "exa-py>=2.23.0",
+    "langchain-openai",
+    "langsmith[otel]",
+    "python-dotenv",
+]
+
+[project.scripts]
+deeplite = "deeplite.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = ["pytest", "ruff"]
+
+[tool.ruff]
+line-length = 120
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
