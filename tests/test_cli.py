@@ -10,10 +10,15 @@ from langchain_core.messages import AIMessage, BaseMessage, SystemMessage, ToolM
 from langchain_core.outputs import ChatGeneration, ChatResult
 from opentelemetry.proto.collector.trace.v1.trace_service_pb2 import ExportTraceServiceRequest
 
-from deeplite.cli import Settings, build_agent, configure_tracing, make_search_tool
+from deeplite.agent import build_agent, make_search_tool
+from deeplite.cli import run_task
+from deeplite.config import Settings
+from deeplite.tracing import configure_tracing
 
 
 class ScriptedModel(BaseChatModel):
+    stop_at_red_team: bool = False
+
     @property
     def _llm_type(self) -> str:
         return "scripted"
@@ -23,52 +28,57 @@ class ScriptedModel(BaseChatModel):
 
     def _generate(self, messages: list[BaseMessage], stop=None, run_manager=None, **kwargs) -> ChatResult:
         system: Final = " ".join(message.text for message in messages if isinstance(message, SystemMessage))
-        if "Use web_search for factual claims" in system:
-            search_results: Final = tuple(message for message in messages if isinstance(message, ToolMessage))
-            if search_results:
-                response: Final = AIMessage(content=f"Draft answer citing {search_results[-1].text}")
+        history: Final = " ".join(message.text for message in messages)
+        if "You are the researcher" in system:
+            if any(isinstance(message, ToolMessage) and message.tool_call_id == "research-search" for message in messages):
+                response: Final = AIMessage(
+                    content="Research cites https://example.com/source",
+                    tool_calls=[{"name": "transfer_to_skeptic", "args": {}, "id": "research-handoff"}],
+                )
             else:
                 response = AIMessage(
                     content="",
                     tool_calls=[
-                        {"name": "web_search", "args": {"query": "evidence for the answer"}, "id": "search-task"}
+                        {"name": "web_search", "args": {"query": "research evidence"}, "id": "research-search"}
                     ],
                 )
-        elif "Review the draft" in system:
-            response = AIMessage(content="Add the missing detail")
+        elif "You are the skeptic" in system:
+            assert "Research cites https://example.com/source" in history
+            response = AIMessage(
+                content="Skeptic asks for independent verification",
+                tool_calls=[{"name": "transfer_to_verifier", "args": {}, "id": "skeptic-handoff"}],
+            )
+        elif "You are the verifier" in system:
+            assert "Skeptic asks for independent verification" in history
+            if any(isinstance(message, ToolMessage) and message.tool_call_id == "verify-search" for message in messages):
+                response = AIMessage(
+                    content="Verifier confirms the source",
+                    tool_calls=[{"name": "transfer_to_red_team", "args": {}, "id": "verifier-handoff"}],
+                )
+            else:
+                response = AIMessage(
+                    content="",
+                    tool_calls=[
+                        {"name": "web_search", "args": {"query": "verify evidence"}, "id": "verify-search"}
+                    ],
+                )
+        elif "You are red_team" in system:
+            assert "Verifier confirms the source" in history
+            response = (
+                AIMessage(content="Red team answer cites https://example.com/source")
+                if self.stop_at_red_team
+                else AIMessage(
+                    content="Red team finds no remaining objection",
+                    tool_calls=[{"name": "transfer_to_editor", "args": {}, "id": "red-team-handoff"}],
+                )
+            )
         else:
-            completed: Final = sum(isinstance(message, ToolMessage) for message in messages)
-            if completed == 0:
-                response = AIMessage(
-                    content="",
-                    tool_calls=[
-                        {
-                            "name": "task",
-                            "args": {"subagent_type": "drafter", "description": "Draft an answer to the user's task"},
-                            "id": "draft-task",
-                        }
-                    ],
-                )
-            elif completed == 1:
-                response = AIMessage(
-                    content="",
-                    tool_calls=[
-                        {
-                            "name": "task",
-                            "args": {
-                                "subagent_type": "reviewer",
-                                "description": "Review Draft answer against the original task",
-                            },
-                            "id": "review-task",
-                        }
-                    ],
-                )
-            else:
-                response = AIMessage(content="Final answer with the missing detail")
+            assert "Red team finds no remaining objection" in history
+            response = AIMessage(content="Final answer cites https://example.com/source")
         return ChatResult(generations=[ChatGeneration(message=response)])
 
 
-def test_subagents_share_one_trace_across_both_otlp_destinations(monkeypatch):
+def test_swarm_handoffs_share_context_and_one_trace_across_both_otlp_destinations(monkeypatch):
     received: Final = ([], [])
 
     def start_server(index: int):
@@ -92,6 +102,7 @@ def test_subagents_share_one_trace_across_both_otlp_destinations(monkeypatch):
     monkeypatch.setenv("LANGSMITH_TRACING_MODE", "otel")
     settings: Final = Settings(
         model="scripted",
+        gateway_url="https://gateway.example.com",
         exa_key="test-exa-key",
         langsmith_endpoint=f"http://127.0.0.1:{langsmith.server_port}/otel/v1/traces",
         langsmith_key="test-langsmith-key",
@@ -105,40 +116,51 @@ def test_subagents_share_one_trace_across_both_otlp_destinations(monkeypatch):
         results=[SimpleNamespace(title="Source", url="https://example.com/source", highlights=["Relevant finding"])]
     )
     try:
-        result: Final = build_agent(ScriptedModel(), make_search_tool(exa)).invoke(
-            {"messages": [{"role": "user", "content": "Answer a question"}]}
-        )
+        answer: Final = run_task(build_agent(ScriptedModel(), make_search_tool(exa)), "Answer a question")
     finally:
         provider.shutdown()
         langsmith.shutdown()
         litellm.shutdown()
 
-    tool_results: Final = tuple(message.text for message in result["messages"] if isinstance(message, ToolMessage))
-    assert any("Draft answer" in text for text in tool_results)
-    assert any("https://example.com/source" in text for text in tool_results)
-    assert any("Add the missing detail" in text for text in tool_results)
-    assert result["messages"][-1].text == "Final answer with the missing detail"
-    exa.search.assert_called_once_with(
-        "evidence for the answer", type="auto", num_results=5, contents={"highlights": True}
-    )
+    assert answer == "Final answer cites https://example.com/source"
+    assert exa.search.call_count == 2
+    assert [call.args[0] for call in exa.search.call_args_list] == ["research evidence", "verify evidence"]
     assert received[0] and received[1]
     assert all(path == "/otel/v1/traces" for path, _, _ in received[0])
     assert all(path == "/v1/traces" for path, _, _ in received[1])
     assert all(headers["x-api-key"] == "test-langsmith-key" for _, headers, _ in received[0])
     assert all(headers["Authorization"] == "Bearer test-litellm-key" for _, headers, _ in received[1])
-    langsmith_trace_ids: Final = {
-        span.trace_id
+    langsmith_spans: Final = tuple(
+        span
         for _, _, body in received[0]
         for resource in ExportTraceServiceRequest.FromString(body).resource_spans
         for scope in resource.scope_spans
         for span in scope.spans
-    }
-    litellm_trace_ids: Final = {
-        span.trace_id
+    )
+    litellm_spans: Final = tuple(
+        span
         for _, _, body in received[1]
         for resource in ExportTraceServiceRequest.FromString(body).resource_spans
         for scope in resource.scope_spans
         for span in scope.spans
-    }
-    assert len(langsmith_trace_ids) == 1
-    assert langsmith_trace_ids == litellm_trace_ids
+    )
+    assert len({span.trace_id for span in langsmith_spans}) == 1
+    assert {span.trace_id for span in langsmith_spans} == {span.trace_id for span in litellm_spans}
+    span_ids: Final = frozenset(span.span_id for span in langsmith_spans)
+    assert all(not span.parent_span_id or span.parent_span_id in span_ids for span in langsmith_spans)
+    assert {
+        "transfer_to_skeptic",
+        "transfer_to_verifier",
+        "transfer_to_red_team",
+        "transfer_to_editor",
+    } <= {span.name for span in langsmith_spans}
+
+
+def test_swarm_can_finish_with_a_non_editor_agent():
+    exa: Final = Mock(spec=Exa)
+    exa.search.return_value = SimpleNamespace(
+        results=[SimpleNamespace(title="Source", url="https://example.com/source", highlights=["Relevant finding"])]
+    )
+    agent: Final = build_agent(ScriptedModel(stop_at_red_team=True), make_search_tool(exa))
+
+    assert run_task(agent, "Answer a question") == "Red team answer cites https://example.com/source"

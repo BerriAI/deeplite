@@ -1,13 +1,14 @@
 [project]
 name = "deeplite"
 version = "0.1.0"
-description = "A small Deep Agents subagent CLI with OpenTelemetry tracing"
+description = "A LangGraph swarm CLI with OpenTelemetry tracing"
 readme = "README.md"
 requires-python = ">=3.13,<3.14"
 dependencies = [
-    "deepagents",
     "exa-py>=2.23.0",
-    "langchain-openai",
+    "langchain>=1.4.3",
+    "langchain-anthropic>=1.7.5",
+    "langgraph-swarm>=0.1.0",
     "langsmith[otel]",
     "python-dotenv",
 ]
