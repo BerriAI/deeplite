@@ -7,3 +7,5 @@ uv run deeplite "is litellm good?"
 ```
 
 The researcher, skeptic, verifier, red team, and editor share one conversation and can hand control to one another. Search runs through Exa. The run stops after at most 40 graph steps, and its trace is exported to both configured OTLP destinations
+
+Agents share an in-memory virtual filesystem. All agents can read it; only the editor can write or edit files. The store lasts for the lifetime of the agent instance and does not write to disk

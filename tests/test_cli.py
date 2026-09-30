@@ -4,13 +4,15 @@ from types import SimpleNamespace
 from typing import Final
 from unittest.mock import Mock
 
+from deepagents.backends.store import StoreBackend
 from exa_py import Exa
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage, BaseMessage, SystemMessage, ToolMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
+from langgraph.store.memory import InMemoryStore
 from opentelemetry.proto.collector.trace.v1.trace_service_pb2 import ExportTraceServiceRequest
 
-from deeplite.agent import build_agent, make_search_tool
+from deeplite.agent import build_agent, make_filesystem_middleware, make_search_tool
 from deeplite.cli import run_task
 from deeplite.config import Settings
 from deeplite.tracing import configure_tracing
@@ -164,3 +166,19 @@ def test_swarm_can_finish_with_a_non_editor_agent():
     agent: Final = build_agent(ScriptedModel(stop_at_red_team=True), make_search_tool(exa))
 
     assert run_task(agent, "Answer a question") == "Red team answer cites https://example.com/source"
+
+
+def test_only_editor_writes_shared_virtual_files():
+    store: Final = InMemoryStore()
+    editor_backend: Final = StoreBackend(store=store, namespace=lambda _runtime: ("deeplite",))
+    reader_backend: Final = StoreBackend(store=store, namespace=lambda _runtime: ("deeplite",))
+    editor_tools: Final = {tool.name for tool in make_filesystem_middleware(editor_backend, writable=True)[0].tools}
+    reader_tools: Final = {tool.name for tool in make_filesystem_middleware(reader_backend, writable=False)[0].tools}
+
+    assert {"read_file", "write_file", "edit_file"} <= editor_tools
+    assert "read_file" in reader_tools
+    assert not {"write_file", "edit_file", "delete", "execute"} & reader_tools
+    assert editor_backend.write("/answer.md", "Final shared answer").error is None
+    answer: Final = reader_backend.read("/answer.md")
+    assert answer.file_data is not None
+    assert answer.file_data["content"] == "Final shared answer"
