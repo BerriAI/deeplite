@@ -9,8 +9,12 @@ dependencies = [
     "exa-py>=2.23.0",
     "langchain>=1.4.3",
     "langchain-anthropic>=1.7.5",
+    "langchain-openai>=1.6.7",
     "langgraph-swarm>=0.1.0",
     "langsmith[otel]",
+    "openinference-instrumentation-langchain>=0.1.78",
+    "opentelemetry-distro>=0.66b0",
+    "opentelemetry-exporter-otlp-proto-http>=1.45.0",
     "python-dotenv",
 ]
 

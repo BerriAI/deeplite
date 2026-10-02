@@ -32,8 +32,9 @@ def configure() -> Settings:
         if parsed.scheme not in {"http", "https"} or not parsed.netloc or not parsed.path.endswith("/v1/traces"):
             raise ValueError("Set both OTLP traces endpoints to full HTTP URLs ending in /v1/traces")
     gateway: Final = urlparse(prod_base)
-    if gateway.scheme != "https" or not gateway.netloc:
-        raise ValueError("Set LITELLM_PROD_BASE to an HTTPS base URL in .env")
+    local_http: Final = gateway.scheme == "http" and gateway.hostname in {"localhost", "127.0.0.1", "::1"}
+    if not gateway.netloc or (gateway.scheme != "https" and not local_http):
+        raise ValueError("Set LITELLM_PROD_BASE to an HTTPS base URL or local HTTP URL in .env")
     exa_key: Final = os.getenv("EXA_API_KEY", "")
     if not exa_key:
         raise ValueError("Set EXA_API_KEY in .env")

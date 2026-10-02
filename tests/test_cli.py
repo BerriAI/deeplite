@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from typing import Final
 from unittest.mock import Mock
 
+import pytest
 from deepagents.backends.store import StoreBackend
 from exa_py import Exa
 from langchain_core.language_models.chat_models import BaseChatModel
@@ -204,3 +205,18 @@ def test_only_editor_writes_shared_virtual_files():
     answer: Final = reader_backend.read("/answer.md")
     assert answer.file_data is not None
     assert answer.file_data["content"] == "Final shared answer"
+
+
+@pytest.mark.parametrize("base", ["http://127.0.0.1:4002", "http://localhost:4002", "http://[::1]:4002"])
+def test_configure_allows_local_http_gateway(monkeypatch, base):
+    monkeypatch.setenv("LITELLM_PROD_BASE", base)
+    monkeypatch.setenv("LITELLM_PROD_KEY", "test-model-key")
+    monkeypatch.setenv("LITELLM_DEV_BASE", "http://127.0.0.1:4002/v1/traces")
+    monkeypatch.setenv("LITELLM_DEV_KEY", "test-trace-key")
+    monkeypatch.setenv("EXA_API_KEY", "test-search-key")
+    monkeypatch.setenv("LANGSMITH_OTLP_TRACES_ENDPOINT", "https://example.com/otel/v1/traces")
+    monkeypatch.setenv("LANGSMITH_API_KEY", "test-langsmith-key")
+    assert configure().prod_base == base
+    monkeypatch.setenv("LITELLM_PROD_BASE", "http://example.com")
+    with pytest.raises(ValueError, match="HTTPS"):
+        configure()
